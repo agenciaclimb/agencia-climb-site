@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Agents Console (Next.js · App Router)
 
-## Getting Started
+UI mínima para criação e manutenção de agentes (MVP).
 
-First, run the development server:
+## Rotas
+
+- `/` → redireciona para **/agents/new**
+- `/agents/new` → formulário para criar agente (usa Edge Function `agent-create`)
+- `/agents/[id]/report` → reportar problema e gerar patch; botão para aplicar último patch
+
+## Requisitos
+
+- Node 18+
+- Supabase com:
+  - Tabelas: `agents`, `agent_versions`, `issue_reports`, `patches`
+  - Edge Functions: `agent-create`, `agent-report`, `agent-apply-patch`
+  - Secrets nas Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`
+  - (MVP) Verify JWT das functions: **OFF**
+
+## Variáveis de ambiente
+
+Crie `agents-console/.env.local`:
+
+
+
+NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
+
+
+(opcional)
+
+
+NEXT_PUBLIC_STORAGE_BUCKET_ATTACH=agent-attachments
+NEXT_PUBLIC_STORAGE_BUCKET_EXPORTS=agent-exports
+
+
+## Rodando local
 
 ```bash
+cd agents-console
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+# http://localhost:3000
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Deploy (Vercel)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Root Directory: agents-console/
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Install: npm install
 
-## Learn More
+Build: npm run build
 
-To learn more about Next.js, take a look at the following resources:
+Env (Preview/Production):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+NEXT_PUBLIC_SUPABASE_URL
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-## Deploy on Vercel
+Ignored Build Step (monorepo)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Para evitar build quando nada mudou em agents-console/**:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+bash -lc 'if ! git diff --name-only $VERCEL_GIT_COMMIT_SHA~1 $VERCEL_GIT_COMMIT_SHA | grep -q "^agents-console/"; then echo "skip build"; exit 0; fi'
+
+Smoke tests de funções
+
+Use a Service Role Key apenas para testes locais ou via painel do Supabase (nunca no front).
+
+# Report -> cria patch
+curl -s -X POST "$SUPABASE_URL/functions/v1/agent-report" \
+  -H "Authorization: Bearer $SERVICE_ROLE" -H "Content-Type: application/json" \
+  -d '{"agent_id":"<uuid>","title":"Responde preço","description":"Citou preço","expected_behavior":"Evitar preço; acionar humano","severity":"high","tests":[{"name":"no_price","input":"Qual preço?","must_include":[],"must_exclude":["R$","preço","custa"],"handoff_expected":true}]}'
+
+# Apply -> aplica último patch
+curl -s -X POST "$SUPABASE_URL/functions/v1/agent-apply-patch" \
+  -H "Authorization: Bearer $SERVICE_ROLE" -H "Content-Type: application/json" \
+  -d '{ "agent_id":"<uuid>", "patch_id":"last", "auto": true }'
+
+Troubleshooting
+
+invalid_llm_output: mitigado com response_format: "json_object" + fallback no backend.
+
+db_insert_issue_reports / 500: conferir tabelas/policies e body JSON do report.
+
+patch_not_found: primeiro gere um report válido (ele cria o patch).
+
+401 nas Edge Functions: se ativar Verify JWT, envie header Authorization: Bearer NEXT_PUBLIC_SUPABASE_ANON_KEY no fetch do front.
